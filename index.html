@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>H5 游戏广告合规审核工具</title>
+    <style>
+        :root{--primary:#e74c3c;--primary-dark:#c0392b;--success:#27ae60;--warning:#f39c12;--danger:#e74c3c;--bg:#f5f6fa;--card:#fff;--text:#2c3e50;--text-light:#7f8c8d;--border:#dcdde1;--shadow:0 2px 12px rgba(0,0,0,.08)}
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.6}
+        .container{max-width:1100px;margin:0 auto;padding:20px}
+        .header{text-align:center;padding:40px 20px 30px;background:linear-gradient(135deg,#e74c3c,#c0392b);color:#fff;border-radius:16px;margin-bottom:24px;box-shadow:var(--shadow)}
+        .header h1{font-size:28px;margin-bottom:8px}
+        .header p{opacity:.9;font-size:15px}
+        .input-section{background:var(--card);border-radius:12px;padding:24px;margin-bottom:24px;box-shadow:var(--shadow)}
+        .input-section h3{margin-bottom:12px;font-size:16px}
+        .url-input{width:100%;min-height:120px;border:2px solid var(--border);border-radius:8px;padding:12px;font-size:14px;font-family:'SF Mono',Monaco,'Cascadia Code',monospace;resize:vertical;transition:border-color .2s}
+        .url-input:focus{outline:none;border-color:var(--primary)}
+        .btn-row{display:flex;gap:12px;margin-top:12px;flex-wrap:wrap}
+        .btn{padding:10px 24px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s}
+        .btn-primary{background:var(--primary);color:#fff}
+        .btn-primary:hover{background:var(--primary-dark)}
+        .btn-primary:disabled{background:#ccc;cursor:not-allowed}
+        .btn-secondary{background:#ecf0f1;color:var(--text)}
+        .btn-secondary:hover{background:#dfe6e9}
+        .btn-small{padding:6px 14px;font-size:13px}
+        .progress-bar{display:none;margin:16px 0;background:#ecf0f1;border-radius:8px;overflow:hidden;height:6px}
+        .progress-bar .fill{height:100%;background:linear-gradient(90deg,var(--primary),var(--warning));transition:width .3s;border-radius:8px}
+        .status-text{font-size:13px;color:var(--text-light);margin-top:8px;white-space:pre-line}
+        .results{display:none}
+        .result-card{background:var(--card);border-radius:12px;margin-bottom:16px;box-shadow:var(--shadow);overflow:hidden}
+        .result-header{padding:16px 20px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;transition:background .15s}
+        .result-header:hover{background:#f8f9fa}
+        .result-header .url{font-weight:600;font-size:14px;word-break:break-all;flex:1}
+        .result-header .badge{padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;white-space:nowrap;margin-left:12px}
+        .badge-pass{background:#d4efdf;color:#1e8449}
+        .badge-warn{background:#fdebd0;color:#b7950b}
+        .badge-fail{background:#fadbd8;color:#c0392b}
+        .result-body{padding:0 20px 20px;display:none}
+        .result-body.open{display:block}
+        .result-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:16px;padding:12px;background:#f8f9fa;border-radius:8px;font-size:13px}
+        .result-meta .label{color:var(--text-light);font-size:12px}
+        .check-item{display:flex;align-items:flex-start;padding:10px 0;border-bottom:1px solid #f0f0f0;font-size:14px}
+        .check-item:last-child{border-bottom:none}
+        .check-icon{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;margin-right:10px;flex-shrink:0;margin-top:1px}
+        .check-pass{background:#d4efdf;color:#1e8449}
+        .check-warn{background:#fdebd0;color:#b7950b}
+        .check-fail{background:#fadbd8;color:#c0392b}
+        .summary-bar{display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap}
+        .summary-item{flex:1;min-width:120px;text-align:center;padding:16px;border-radius:10px;background:var(--card);box-shadow:var(--shadow)}
+        .summary-item .num{font-size:28px;font-weight:700}
+        .summary-item .txt{font-size:12px;color:var(--text-light);margin-top:4px}
+        .summary-item.pass .num{color:var(--success)}
+        .summary-item.warn .num{color:var(--warning)}
+        .summary-item.fail .num{color:var(--danger)}
+        .export-row{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+        .mode-tabs{display:flex;gap:0;margin-bottom:20px;background:var(--card);border-radius:10px;overflow:hidden;box-shadow:var(--shadow)}
+        .mode-tab{flex:1;padding:12px;text-align:center;cursor:pointer;font-size:14px;font-weight:500;border-bottom:3px solid transparent;transition:all .2s}
+        .mode-tab:hover{background:#f8f9fa}
+        .mode-tab.active{border-bottom-color:var(--primary);color:var(--primary)}
+        .mode-panel{display:none}
+        .mode-panel.active{display:block}
+        .paste-hint{background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;line-height:1.8}
+        .paste-hint code{background:#f5f5f5;padding:2px 6px;border-radius:4px;font-size:12px}
+        .error-box{background:#fff5f5;border:1px solid #ffcdd2;border-radius:8px;padding:12px 16px;margin:8px 0;font-size:13px;color:#c62828;white-space:pre-wrap}
+        .history-section{background:var(--card);border-radius:12px;padding:20px;margin-top:24px;box-shadow:var(--shadow)}
+        .history-item{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f0f0f0;font-size:13px}
+        .history-item:last-child{border-bottom:none}
+        .history-url{flex:1;word-break:break-all;margin-right:12px}
+        .history-time{color:var(--text-light);white-space:nowrap}
+        @media(max-width:600px){.header h1{font-size:22px}.container{padding:12px}.result-meta{grid-template-columns:1fr}}
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>🦞 H5 游戏广告合规审核工具</h1>
+        <p>粘贴游戏链接或源码 → 自动检测广告合规 → 输出审核报告</p>
+    </div>
+
+    <div class="mode-tabs">
+        <div class="mode-tab active" onclick="switchMode('url')">🔗 粘贴链接</div>
+        <div class="mode-tab" onclick="switchMode('html')">📋 粘贴源码</div>
+        <div class="mode-tab" onclick="switchMode('history')">📜 历史</div>
+    </div>
+
+    <!-- URL Mode -->
+    <div class="mode-panel active" id="panel-url">
+        <div class="input-section">
+            <h3>📎 输入游戏链接（每行一个，支持批量）</h3>
+            <textarea class="url-input" id="urlInput" placeholder="https://example.com/game/index.html&#10;https://example.com/game2/index.html&#10;&#10;每行一个链接"></textarea>
+            <div class="btn-row">
+                <button class="btn btn-primary" id="startBtn" onclick="startUrlAudit()">🚀 开始审核</button>
+                <button class="btn btn-secondary" onclick="loadExample()">📋 加载示例</button>
+                <button class="btn btn-secondary" onclick="document.getElementById('urlInput').value=''">🗑️ 清空</button>
+            </div>
+            <div class="progress-bar" id="progressBar"><div class="fill" id="progressFill"></div></div>
+            <div class="status-text" id="statusText"></div>
+            <div id="errorBox" class="error-box" style="display:none"></div>
+        </div>
+    </div>
+
+    <!-- HTML Paste Mode -->
+    <div class="mode-panel" id="panel-html">
+        <div class="input-section">
+            <h3>📋 粘贴游戏页面 HTML 源码</h3>
+            <div class="paste-hint">
+                <strong>使用方法：</strong><br>
+                1. 在浏览器中打开游戏页面<br>
+                2. 按 <code>Ctrl+U</code>（Mac: <code>Cmd+Option+U</code>）查看源码<br>
+                3. 全选（<code>Ctrl+A</code>）→ 复制（<code>Ctrl+C</code>）<br>
+                4. 粘贴到下面的文本框中<br>
+                5. 点击「开始分析」<br><br>
+                💡 支持同时粘贴多个页面，用 <code>---分隔---</code> 隔开
+            </div>
+            <textarea class="url-input" id="htmlInput" placeholder="在此粘贴 HTML 源码...&#10;&#10;如需分析多个页面，用以下分隔：&#10;---分隔---&#10;&#10;也可以第一行写 URL，后面跟源码：&#10;https://example.com/game/index.html&#10;&lt;!DOCTYPE html&gt;..."></textarea>
+            <div class="btn-row">
+                <button class="btn btn-primary" id="htmlStartBtn" onclick="startHtmlAudit()">🔬 开始分析</button>
+                <button class="btn btn-secondary" onclick="loadHtmlExample()">📋 加载示例</button>
+                <button class="btn btn-secondary" onclick="document.getElementById('htmlInput').value=''">🗑️ 清空</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- History -->
+    <div class="mode-panel" id="panel-history">
+        <div class="history-section">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                <h3>📜 审核历史</h3>
+                <button class="btn btn-secondary btn-small" onclick="clearHistory()">清空历史</button>
+            </div>
+            <div id="historyList"><p style="color:var(--text-light);font-size:13px">暂无历史记录</p></div>
+        </div>
+    </div>
+
+    <!-- Results -->
+    <div class="results" id="results">
+        <div class="summary-bar" id="summaryBar"></div>
+        <div class="export-row">
+            <button class="btn btn-secondary btn-small" onclick="exportMarkdown()">📄 导出 Markdown</button>
+            <button class="btn btn-secondary btn-small" onclick="exportJSON()">📦 导出 JSON</button>
+            <button class="btn btn-secondary btn-small" onclick="exportTSV()">📊 复制 TSV（飞书粘贴）</button>
+        </div>
+        <div id="resultCards"></div>
+    </div>
+</div>
+
+<script>
+let auditResults = [];
+
+// ==================== Mode Switch ====================
+function switchMode(mode) {
+    document.querySelectorAll('.mode-tab').forEach((t,i) => {
+        t.classList.toggle('active', ['url','html','history'][i] === mode);
+    });
+    document.querySelectorAll('.mode-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('panel-' + mode).classList.add('active');
+    if (mode === 'history') renderHistory();
+}
+
+// ==================== Audit Engine ====================
+function auditHTML(html, url) {
+    const result = { url, timestamp: new Date().toISOString(), issues: [], warnings: [], passed: [], details: {} };
+    const r = (pat, flags) => { try { return (html.match(new RegExp(pat, flags || 'gi')) || []).length; } catch(e) { return 0; } };
+    const rf = (pat, flags) => { try { return [...new Set(html.match(new RegExp(pat, flags || 'gi')) || [])].slice(0, 8); } catch(e) { return []; } };
+
+    const titleM = html.match(/<title>(.*?)<\/title>/is);
+    if (titleM) result.details.title = titleM[1].trim();
+
+    const engines = [];
+    if (/cocos|cc\./i.test(html)) engines.push('Cocos Creator');
+    if (/unity|webgl.*loader|unityWebglBuild/i.test(html)) engines.push('Unity WebGL');
+    if (/construct|c3runtime|c2runtime/i.test(html)) engines.push('Construct');
+    if (/phaser/i.test(html)) engines.push('Phaser');
+    if (/godot/i.test(html)) engines.push('Godot');
+    if (engines.length) result.details.engine = engines.join(', ');
+
+    const pubIds = rf('ca-pub-\\d+');
+    if (pubIds.length) result.details.pubIds = pubIds;
+
+    const adSlots = rf('data-ad-slot="([^"]*)"');
+    if (adSlots.length) result.details.adSlots = adSlots;
+
+    const sdks = [];
+    if (/adsbygoogle/i.test(html)) sdks.push('Google AdSense');
+    if (/adBreak|adConfig/i.test(html)) sdks.push('AdBreak API');
+    if (/ima3|google\.ima/i.test(html)) sdks.push('Google IMA SDK');
+    if (/funmax/i.test(html)) sdks.push('Funmax SDK');
+    if (/adsGameCon|AGSDK|actiongameshub/i.test(html)) sdks.push('AGSDK');
+    if (/gamemonetize/i.test(html)) sdks.push('GameMonetize');
+    if (/poki/i.test(html) && !sdks.join('').includes('Poki')) sdks.push('Poki SDK');
+    if (sdks.length) result.details.adSdk = sdks.join(', ');
+
+    // 1. 开屏/Preroll
+    const preroll = r('preroll|pre.?roll|splash.*ad|preAd|preloadAd');
+    const autoTrigger = r('visibilitychange.*ad|autoShow|auto.*adBreak|setInterval.*showAd|setTimeout.*showAd|onload.*adBreak');
+    if (preroll > 0 && autoTrigger > 0)
+        result.issues.push({ cat: '开屏广告', icon: 'fail', msg: `preroll/splash (${preroll}) + 自动触发 (${autoTrigger})` });
+    else if (preroll > 0)
+        result.warnings.push({ cat: '开屏广告', icon: 'warn', msg: `preroll/splash 相关代码 (${preroll} 处)，需确认是否自动播放` });
+    else
+        result.passed.push({ cat: '开屏广告', icon: 'pass', msg: '未检测到 preroll/splash' });
+
+    // 2. visibilitychange
+    const visAd = r('visibilitychange.*ad|visibilitychange.*show|document.*visibility.*ad');
+    if (visAd > 0)
+        result.issues.push({ cat: '自动弹广告', icon: 'fail', msg: `visibilitychange + 广告联动 (${visAd} 处)` });
+    else
+        result.passed.push({ cat: '自动弹广告', icon: 'pass', msg: '未检测到 visibilitychange 自动弹广告' });
+
+    // 3. 定时器
+    const timerShow = r('setInterval\\s*\\([^)]*showAd|setTimeout\\s*\\([^)]*showAd');
+    if (timerShow > 0)
+        result.issues.push({ cat: '定时弹广告', icon: 'fail', msg: `定时器触发广告 (${timerShow} 处)` });
+    else
+        result.passed.push({ cat: '定时弹广告', icon: 'pass', msg: '未检测到定时器触发广告' });
+
+    // 4. Banner
+    const bannerFixed = r('position:\\s*fixed|position:\\s*absolute.*banner|z-index:\\s*9{2,}|z-index:\\s*9[0-9]0');
+    const bannerDiv = r('initBanner|banner.*div|bottom.*banner|bannerWidth|bannerHeight|xmBanner');
+    if (bannerFixed > 0 || bannerDiv > 0)
+        result.issues.push({ cat: 'Banner 遮挡', icon: 'warn', msg: `Banner 代码 (定位:${bannerFixed}, 逻辑:${bannerDiv})，检查是否常驻遮挡` });
+    else
+        result.passed.push({ cat: 'Banner', icon: 'pass', msg: '未检测到 Banner 广告代码' });
+
+    // 5. iframe
+    const iframes = rf('src="[^"]*\\.html[^"]*"');
+    const jsIframes = rf("src[=:\\s]+['\"]\\\\./(game|index|play)\\\\.html");
+    const containers = rf('gameFrameContainer|gameIFrame|createIframe');
+    const allIframes = [...new Set([...iframes, ...jsIframes])];
+    if (!allIframes.length && containers.length) allIframes.push('(JS动态创建)');
+    if (allIframes.length)
+        result.warnings.push({ cat: 'iframe', icon: 'warn', msg: `iframe 嵌套: ${allIframes.join(', ')}` });
+    else
+        result.passed.push({ cat: 'iframe', icon: 'pass', msg: '无 iframe 嵌套' });
+
+    // 6. CSP
+    if (/Content-Security-Policy/i.test(html))
+        result.passed.push({ cat: 'CSP', icon: 'pass', msg: '设置了 Content-Security-Policy' });
+    else
+        result.warnings.push({ cat: 'CSP', icon: 'warn', msg: '未检测到 CSP' });
+
+    // 7. 混淆
+    const obfuscate = r('_0x[a-f0-9]');
+    if (obfuscate > 20)
+        result.warnings.push({ cat: '代码混淆', icon: 'warn', msg: `大量混淆代码 (${obfuscate} 处)` });
+
+    // 8. adBreak start
+    const adbreakStart = r("adBreak\\s*\\(\\s*\\{[^}]*type:\\s*['\"]start");
+    if (adbreakStart > 0)
+        result.warnings.push({ cat: 'adBreak start', icon: 'warn', msg: `adBreak type=start (${adbreakStart} 处)，需确认是否自动 preroll` });
+
+    return result;
+}
+
+// ==================== URL Mode ====================
+const PROXIES = [
+    u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+    u => 'https://corsproxy.io/?' + encodeURIComponent(u),
+    u => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
+];
+
+async function fetchUrl(url) {
+    for (const mk of PROXIES) {
+        try {
+            const r = await fetch(mk(url), { signal: AbortSignal.timeout(20000) });
+            if (r.ok) return await r.text();
+        } catch(e) { continue; }
+    }
+    throw new Error('无法获取页面（CORS 代理均失败）\n💡 提示：可以用「粘贴源码」模式，在浏览器打开游戏后 Ctrl+U 查看源码');
+}
+
+async function startUrlAudit() {
+    const input = document.getElementById('urlInput').value.trim();
+    if (!input) return alert('请输入至少一个游戏链接');
+    const urls = input.split('\n').map(s=>s.trim()).filter(s=>s && /^https?:\/\//.test(s));
+    if (!urls.length) return alert('未找到有效链接，确保每行以 http:// 或 https:// 开头');
+
+    const btn = document.getElementById('startBtn');
+    btn.disabled = true; btn.textContent = '⏳ 审核中...';
+    const bar = document.getElementById('progressBar'), fill = document.getElementById('progressFill');
+    const status = document.getElementById('statusText');
+    const errBox = document.getElementById('errorBox');
+    bar.style.display = 'block'; errBox.style.display = 'none';
+    auditResults = []; let errors = [];
+
+    for (let i = 0; i < urls.length; i++) {
+        status.textContent = `[${i+1}/${urls.length}] 正在审核: ${urls[i]}`;
+        fill.style.width = `${(i/urls.length)*100}%`;
+        try {
+            const html = await fetchUrl(urls[i]);
+            auditResults.push(auditHTML(html, urls[i]));
+        } catch(e) {
+            errors.push(`${urls[i]}: ${e.message}`);
+            auditResults.push({ url: urls[i], timestamp: new Date().toISOString(), issues: [{ cat:'获取失败', icon:'fail', msg: e.message }], warnings:[], passed:[], details:{} });
+        }
+    }
+    fill.style.width = '100%';
+    status.textContent = `✅ 审核完成，共 ${urls.length} 个链接`;
+    if (errors.length) { errBox.style.display = 'block'; errBox.textContent = errors.join('\n'); }
+    btn.disabled = false; btn.textContent = '🚀 开始审核';
+    renderResults(); saveToHistory(auditResults);
+}
+
+// ==================== HTML Paste Mode ====================
+function startHtmlAudit() {
+    const raw = document.getElementById('htmlInput').value.trim();
+    if (!raw) return alert('请先粘贴 HTML 源码');
+
+    // Split by separator or detect URL+HTML pattern
+    const blocks = raw.split(/---分隔---/g).map(s => s.trim()).filter(Boolean);
+    auditResults = [];
+
+    for (const block of blocks) {
+        let url = '(粘贴的源码)';
+        let html = block;
+
+        // If first line looks like a URL, extract it
+        const lines = block.split('\n');
+        if (/^https?:\/\//.test(lines[0].trim())) {
+            url = lines[0].trim();
+            html = lines.slice(1).join('\n');
+        }
+
+        auditResults.push(auditHTML(html, url));
+    }
+
+    renderResults();
+    saveToHistory(auditResults);
+}
+
+function loadHtmlExample() {
+    document.getElementById('htmlInput').value = `https://example.com/game/index.html
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Test Game</title>
+  <`+`script src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1234567890"><\/script>
+  <`+`script>
+    window.adsbygoogle = window.adsbygoogle || [];
+    var adBreak = adConfig = function(o) { adsbygoogle.push(o); }
+    adConfig({ preloadAdBreaks: 'on' });
+  <\/script>
+  <style>
+    .bottom-div { position: fixed; bottom: 0; z-index: 9999; width: 320px; height: 50px; }
+  </style>
+</head>
+<body>
+  <canvas id="GameCanvas"></canvas>
+  <div class="bottom-div">
+    <ins class="adsbygoogle" data-ad-client="ca-pub-1234567890" data-ad-slot="999999"></ins>
+  </div>
+  <`+`script>
+    function showTableAd() {
+      adBreak({ type: 'start', name: 'game_started' });
+    }
+  <\/script>
+</body>
+</html>`;
+}
+
+// ==================== Render ====================
+function renderResults() {
+    const container = document.getElementById('results');
+    container.style.display = 'block';
+
+    let tp=0,tw=0,tf=0;
+    auditResults.forEach(r=>{tp+=r.passed.length;tw+=r.warnings.length;tf+=r.issues.length});
+
+    document.getElementById('summaryBar').innerHTML = `
+        <div class="summary-item pass"><div class="num">${auditResults.length}</div><div class="txt">游戏数</div></div>
+        <div class="summary-item pass"><div class="num">${tp}</div><div class="txt">合规项</div></div>
+        <div class="summary-item warn"><div class="num">${tw}</div><div class="txt">关注项</div></div>
+        <div class="summary-item fail"><div class="num">${tf}</div><div class="txt">问题项</div></div>`;
+
+    document.getElementById('resultCards').innerHTML = auditResults.map((r,idx) => {
+        const st = r.issues.length ? 'fail' : r.warnings.length ? 'warn' : 'pass';
+        const stT = {pass:'✅ 合规',warn:'⚠️ 关注',fail:'🔴 有问题'}[st];
+        const bC = {pass:'badge-pass',warn:'badge-warn',fail:'badge-fail'}[st];
+
+        const meta = [];
+        if(r.details.title) meta.push(`<div><span class="label">游戏</span><span>${r.details.title}</span></div>`);
+        if(r.details.engine) meta.push(`<div><span class="label">引擎</span><span>${r.details.engine}</span></div>`);
+        if(r.details.pubIds) meta.push(`<div><span class="label">Publisher ID</span><span>${r.details.pubIds.join(', ')}</span></div>`);
+        if(r.details.adSdk) meta.push(`<div><span class="label">广告 SDK</span><span>${r.details.adSdk}</span></div>`);
+        if(r.details.adSlots) meta.push(`<div><span class="label">广告 Slot</span><span>${r.details.adSlots.join(', ')}</span></div>`);
+
+        const chk = items => items.map(i =>
+            `<div class="check-item"><div class="check-icon check-${i.icon}">${i.icon==='pass'?'✓':i.icon==='warn'?'!':'✗'}</div><div><strong>[${i.cat}]</strong> ${i.msg}</div></div>`
+        ).join('');
+
+        return `<div class="result-card">
+            <div class="result-header" onclick="this.nextElementSibling.classList.toggle('open')">
+                <span class="url">${r.url}</span>
+                <span class="badge ${bC}">${stT}</span>
+            </div>
+            <div class="result-body">
+                ${meta.length?'<div class="result-meta">'+meta.join('')+'</div>':''}
+                ${chk(r.issues)}${chk(r.warnings)}${chk(r.passed)}
+            </div>
+        </div>`;
+    }).join('');
+
+    container.scrollIntoView({ behavior: 'smooth' });
+}
+
+function loadExample() {
+    document.getElementById('urlInput').value =
+        'https://leaping.myfunmax.com/preview/joker-vertical_8bcf313ee6/index.html\nhttps://baby4y.myfunmax.com/preview/crazy-race_4889903db3/index.html';
+}
+
+// ==================== Export ====================
+function exportMarkdown() {
+    let md = `# H5 游戏广告合规审核报告\n- 时间: ${new Date().toLocaleString()}\n\n`;
+    auditResults.forEach(r => {
+        const st = r.issues.length ? '🔴 有问题' : r.warnings.length ? '⚠️ 关注' : '✅ 合规';
+        md += `## ${r.url} — ${st}\n`;
+        if(r.details.title) md += `- 游戏: ${r.details.title}\n`;
+        if(r.details.engine) md += `- 引擎: ${r.details.engine}\n`;
+        if(r.details.pubIds) md += `- Publisher ID: ${r.details.pubIds.join(', ')}\n`;
+        if(r.details.adSdk) md += `- 广告 SDK: ${r.details.adSdk}\n`;
+        if(r.issues.length){md+=`### 🔴 问题项\n`;r.issues.forEach(i=>md+=`- [${i.cat}] ${i.msg}\n`)}
+        if(r.warnings.length){md+=`### ⚠️ 关注项\n`;r.warnings.forEach(i=>md+=`- [${i.cat}] ${i.msg}\n`)}
+        if(r.passed.length){md+=`### ✅ 合规项\n`;r.passed.forEach(i=>md+=`- [${i.cat}] ${i.msg}\n`)}
+        md += '\n---\n\n';
+    });
+    dl(md,'h5-audit.md','text/markdown');
+}
+function exportJSON() { dl(JSON.stringify(auditResults,null,2),'h5-audit.json','application/json'); }
+function exportTSV() {
+    let t = 'URL\t游戏名\t引擎\tPublisher ID\t广告SDK\t问题数\t关注数\t合规数\t状态\n';
+    auditResults.forEach(r=>{
+        const st=r.issues.length?'有问题':r.warnings.length?'关注':'合规';
+        t+=`${r.url}\t${r.details.title||''}\t${r.details.engine||''}\t${(r.details.pubIds||[]).join(', ')}\t${r.details.adSdk||''}\t${r.issues.length}\t${r.warnings.length}\t${r.passed.length}\t${st}\n`;
+    });
+    navigator.clipboard.writeText(t).then(()=>alert('已复制！直接粘贴到飞书多维表格即可')).catch(()=>dl(t,'h5-audit.tsv','text/tab-separated-values'));
+}
+function dl(c,n,t){const b=new Blob([c],{type:t}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=n;a.click();URL.revokeObjectURL(u)}
+
+// ==================== History ====================
+function saveToHistory(results) {
+    const h = JSON.parse(localStorage.getItem('h5_audit_history')||'[]');
+    results.forEach(r=>h.unshift({url:r.url,time:new Date().toLocaleString(),status:r.issues.length?'fail':r.warnings.length?'warn':'pass',issues:r.issues.length,warnings:r.warnings.length,passed:r.passed.length,data:r}));
+    if(h.length>100)h.length=100;
+    localStorage.setItem('h5_audit_history',JSON.stringify(h));
+}
+function renderHistory() {
+    const h = JSON.parse(localStorage.getItem('h5_audit_history')||'[]');
+    const c = document.getElementById('historyList');
+    if(!h.length){c.innerHTML='<p style="color:var(--text-light);font-size:13px">暂无历史记录</p>';return}
+    c.innerHTML=h.map((x,i)=>{
+        const b={pass:'badge-pass',warn:'badge-warn',fail:'badge-fail'}[x.status];
+        const s={pass:'合规',warn:'关注',fail:'有问题'}[x.status];
+        return `<div class="history-item"><span class="history-url">${x.url}</span><span class="history-time">${x.time}</span><span class="badge ${b}">${s}</span><button class="btn btn-secondary btn-small" style="margin-left:8px" onclick="rerunHistory(${i})">查看</button></div>`;
+    }).join('');
+}
+function rerunHistory(i){
+    const h=JSON.parse(localStorage.getItem('h5_audit_history')||'[]');
+    if(h[i]){auditResults=[h[i].data];renderResults();switchMode('url')}
+}
+function clearHistory(){if(confirm('确定清空？')){localStorage.removeItem('h5_audit_history');renderHistory()}}
+</script>
+</body>
+</html>
