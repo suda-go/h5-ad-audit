@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>H5 游戏广告合规审核工具</title>
+    <title>H5 游戏广告合规审核工具 v2.0</title>
     <style>
         :root{--primary:#e74c3c;--primary-dark:#c0392b;--success:#27ae60;--warning:#f39c12;--danger:#e74c3c;--bg:#f5f6fa;--card:#fff;--text:#2c3e50;--text-light:#7f8c8d;--border:#dcdde1;--shadow:0 2px 12px rgba(0,0,0,.08)}
         *{margin:0;padding:0;box-sizing:border-box}
@@ -12,6 +12,7 @@
         .header{text-align:center;padding:40px 20px 30px;background:linear-gradient(135deg,#e74c3c,#c0392b);color:#fff;border-radius:16px;margin-bottom:24px;box-shadow:var(--shadow)}
         .header h1{font-size:28px;margin-bottom:8px}
         .header p{opacity:.9;font-size:15px}
+        .header .ver{opacity:.6;font-size:12px;margin-top:4px}
         .input-section{background:var(--card);border-radius:12px;padding:24px;margin-bottom:24px;box-shadow:var(--shadow)}
         .input-section h3{margin-bottom:12px;font-size:16px}
         .url-input{width:100%;min-height:120px;border:2px solid var(--border);border-radius:8px;padding:12px;font-size:14px;font-family:'SF Mono',Monaco,'Cascadia Code',monospace;resize:vertical;transition:border-color .2s}
@@ -46,6 +47,11 @@
         .check-pass{background:#d4efdf;color:#1e8449}
         .check-warn{background:#fdebd0;color:#b7950b}
         .check-fail{background:#fadbd8;color:#c0392b}
+        .check-info{background:#d6eaf8;color:#2980b9}
+        .score-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-left:6px}
+        .score-high{background:#fadbd8;color:#c0392b}
+        .score-mid{background:#fdebd0;color:#b7950b}
+        .score-low{background:#d4efdf;color:#1e8449}
         .summary-bar{display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap}
         .summary-item{flex:1;min-width:120px;text-align:center;padding:16px;border-radius:10px;background:var(--card);box-shadow:var(--shadow)}
         .summary-item .num{font-size:28px;font-weight:700}
@@ -76,6 +82,7 @@
     <div class="header">
         <h1>🦞 H5 游戏广告合规审核工具</h1>
         <p>粘贴游戏链接或源码 → 自动检测广告合规 → 输出审核报告</p>
+        <div class="ver">v2.0 — 精准检测 · 权重分级 · 规则引擎</div>
     </div>
 
     <div class="mode-tabs">
@@ -111,7 +118,7 @@
                 3. 全选（<code>Ctrl+A</code>）→ 复制（<code>Ctrl+C</code>）<br>
                 4. 粘贴到下面的文本框中<br>
                 5. 点击「开始分析」<br><br>
-                💡 支持同时粘贴多个页面，用 <code>---分隔---</code> 隔开
+                💡 支持同时粘贴多个页面，用 <code>---分隔---</code> 隔开（允许前后有空格和 - 变体）
             </div>
             <textarea class="url-input" id="htmlInput" placeholder="在此粘贴 HTML 源码...&#10;&#10;如需分析多个页面，用以下分隔：&#10;---分隔---&#10;&#10;也可以第一行写 URL，后面跟源码：&#10;https://example.com/game/index.html&#10;&lt;!DOCTYPE html&gt;..."></textarea>
             <div class="btn-row">
@@ -158,105 +165,329 @@ function switchMode(mode) {
     if (mode === 'history') renderHistory();
 }
 
+// ==================== Rule Engine ====================
+// 每条规则: { id, name, category, severity, weight, check(html, helpers) => { pass, msg } }
+// severity: 'critical' | 'warning' | 'info'
+const RULES = [
+    // ===== 🔴 高危规则 (critical) =====
+    {
+        id: 'auto_preroll',
+        name: '开屏/Preroll 自动播放',
+        category: '开屏广告',
+        severity: 'critical',
+        check(html, h) {
+            // preroll + 自动触发 = 违规
+            const preroll = h.count('preroll|pre.?roll|splash.*ad|preAd');
+            // 自动触发信号：onload/adBreak、visibilitychange 直接触发广告（不含 pause/resume 保护）
+            const autoInLoad = h.count('window\\.onload[^;]*adBreak|document\\.addEventListener\\s*\\(\\s*[\'"]load[\'"][^)]*\\)\\s*\\{[^}]*adBreak');
+            const autoOnReady = h.count('DOMContentLoaded[^}]*adBreak|onreadystatechange[^}]*adBreak');
+            const autoShow = h.count('\\bautoShow\\b|\\bautoPreloadAd\\b');
+            if (preroll > 0 && (autoInLoad > 0 || autoOnReady > 0 || autoShow > 0))
+                return { pass: false, msg: `检测到 preroll/splash (${preroll}) + 页面加载自动触发 (${autoInLoad + autoOnReady + autoShow})` };
+            if (preroll > 0)
+                return { pass: null, msg: `preroll/splash 相关代码 (${preroll} 处)，需确认是否在用户操作后触发` };
+            return { pass: true, msg: '未检测到 preroll/splash 自动播放' };
+        }
+    },
+    {
+        id: 'auto_adbreak_start',
+        name: 'adBreak start 自动触发',
+        category: '自动弹广告',
+        severity: 'critical',
+        check(html, h) {
+            // adBreak({type:'start'}) 如果在 onload/setTimeout(fn,0)/无用户交互上下文中 = 违规
+            const startCalls = h.count("adBreak\\s*\\(\\s*\\{[^}]*type\\s*:\\s*['\"]start['\"]");
+            if (startCalls === 0) return { pass: true, msg: '未检测到 adBreak({type:\'start\'})' };
+
+            // 检查是否在事件回调外（粗略：看前面 500 字符有没有 click/touch/pointer 事件绑定）
+            const startIdx = html.search(/adBreak\s*\(\s*\{[^}]*type\s*:\s*['"]start['"]/i);
+            const ctx = html.slice(Math.max(0, startIdx - 800), startIdx + 200);
+            const hasUserEvent = /addEventListener\s*\(\s*['"](click|touchstart|pointerdown|mousedown)['"]|\.onclick\b|\.ontouchstart\b/i.test(ctx);
+
+            if (!hasUserEvent && startCalls > 0) {
+                // 进一步检查是否在 setTimeout(... , 0) 或 onload 内
+                const inTimeout = /setTimeout\s*\([^)]*adBreak/i.test(ctx);
+                const inLoad = /onload|DOMContentLoaded/i.test(ctx);
+                if (inTimeout || inLoad)
+                    return { pass: false, msg: `adBreak({type:'start'}) 在 onload/定时器中自动触发 (${startCalls} 处)` };
+                return { pass: null, msg: `adBreak({type:'start'}) (${startCalls} 处)，未发现明确用户事件触发，需人工确认` };
+            }
+            return { pass: null, msg: `adBreak({type:'start'}) (${startCalls} 处)，似乎在用户事件回调中，需确认` };
+        }
+    },
+    {
+        id: 'visibilitychange_ad',
+        name: 'visibilitychange 弹广告',
+        category: '自动弹广告',
+        severity: 'critical',
+        check(html, h) {
+            // 精准检测：只在 visibilitychange 回调中调用 adBreak/showAd 的才算违规
+            // 排除：visibilitychange + 暂停游戏（pause/resume）这种合规行为
+            // 查找 visibilitychange 回调中的 adBreak/showAd（排除 pause/resume 类型）
+            const visBlocks = html.match(/visibilitychange[\s\S]{0,500}/gi) || [];
+            let violations = 0;
+            let legitimate = 0;
+            for (const block of visBlocks) {
+                // 合规：只是暂停/恢复游戏
+                if (/pause|resume|stop.*game|start.*game|game.*pause/i.test(block) && !/adBreak|showAd|showInterstitial/i.test(block)) {
+                    legitimate++;
+                    continue;
+                }
+                // 违规：触发广告展示
+                if (/adBreak|showAd|showInterstitial|adsbygoogle\.push/i.test(block)) {
+                    // 排除 type=pause（合规行为）
+                    if (/type\s*:\s*['"]pause['"]/i.test(block)) {
+                        legitimate++;
+                        continue;
+                    }
+                    violations++;
+                }
+            }
+            if (violations > 0)
+                return { pass: false, msg: `visibilitychange 回调中触发广告展示 (${violations} 处)，排除 ${legitimate} 处合规暂停` };
+            if (legitimate > 0)
+                return { pass: true, msg: `visibilitychange 仅用于游戏暂停/恢复 (${legitimate} 处)，合规` };
+            return { pass: true, msg: '未检测到 visibilitychange 广告联动' };
+        }
+    },
+    {
+        id: 'timer_ad_trigger',
+        name: '定时器触发广告',
+        category: '定时弹广告',
+        severity: 'critical',
+        check(html, h) {
+            // 精准：setInterval/setTimeout 直接调用 adBreak/showAd 的 = 违规
+            // 误报排除：只是命名含 ad 的函数、回调注册（非触发）
+            const autoTimer = h.count('setInterval\\s*\\([^)]*\\b(adBreak|showAd|showInterstitial)\\b');
+            const autoTimeout = h.count('setTimeout\\s*\\([^)]*\\b(adBreak|showAd|showInterstitial)\\b[^)]*,\\s*\\d+\\s*\\)');
+            const total = autoTimer + autoTimeout;
+            if (total > 0)
+                return { pass: false, msg: `setInterval/setTimeout 直接触发广告 (${total} 处)` };
+            // 检查 setInterval + adBreak 分开写的情况（更隐蔽）
+            const suspiciousInterval = h.count('setInterval\\s*\\([^)]*ad');
+            if (suspiciousInterval > 0)
+                return { pass: null, msg: `setInterval 中引用了广告相关函数 (${suspiciousInterval} 处)，需人工确认` };
+            return { pass: true, msg: '未检测到定时器触发广告' };
+        }
+    },
+    {
+        id: 'gma_sdk',
+        name: 'GMA SDK 广告',
+        category: '第三方广告',
+        severity: 'critical',
+        check(html, h) {
+            const gmaHits = h.count('gmaSdk|GMA\\s*SDK|gma_ad|gmaAd');
+            const gmaShow = h.count('gmaSdk\\.show|gmaSdk\\.preload|gma_ad\\.show');
+            if (gmaShow > 0)
+                return { pass: false, msg: `GMA SDK 广告调用 (${gmaShow} 处 show/preload)` };
+            if (gmaHits > 0)
+                return { pass: null, msg: `检测到 GMA SDK 代码 (${gmaHits} 处)，需确认广告触发逻辑` };
+            return { pass: true, msg: '未检测到 GMA SDK' };
+        }
+    },
+
+    // ===== ⚠️ 关注规则 (warning) =====
+    {
+        id: 'banner_ad',
+        name: 'Banner 广告',
+        category: 'Banner 遮挡',
+        severity: 'warning',
+        check(html, h) {
+            const bannerFixed = h.count('position:\\s*fixed[^;]*banner|position:\\s*absolute[^;]*banner');
+            const bannerDiv = h.count('initBanner|banner.*div|bottom.*banner|bannerWidth|bannerHeight|xmBanner|\\bbannerAd\\b');
+            const highZ = h.count('z-index:\\s*9{3,}|z-index:\\s*9[0-9]{2}\\b');
+            if (bannerDiv > 0 || bannerFixed > 0)
+                return { pass: null, msg: `Banner 广告代码 (逻辑:${bannerDiv}, 固定定位:${bannerFixed}, 高z-index:${highZ})，检查是否常驻遮挡游戏` };
+            return { pass: true, msg: '未检测到 Banner 广告代码' };
+        }
+    },
+    {
+        id: 'interstitial_timing',
+        name: '插屏广告时机',
+        category: '插屏广告',
+        severity: 'warning',
+        check(html, h) {
+            const interstitial = h.count('interstitial|showInterstitial|rewardInterstitial');
+            const gameEnd = h.count('gameOver|gameEnd|levelComplete|levelEnd|sceneEnd|onGameOver');
+            const autoShow = h.count('setInterval[^)]*showInterstitial|setTimeout[^)]*showInterstitial');
+            if (interstitial > 0 && autoShow > 0)
+                return { pass: false, msg: `插屏广告自动定时弹出 (${autoShow} 处)` };
+            if (interstitial > 0 && gameEnd > 0)
+                return { pass: true, msg: `插屏广告 (${interstitial}) + 游戏结束回调 (${gameEnd})，时机合理` };
+            if (interstitial > 0)
+                return { pass: null, msg: `插屏广告代码 (${interstitial} 处)，需确认触发时机` };
+            return { pass: true, msg: '未检测到插屏广告' };
+        }
+    },
+    {
+        id: 'preload_adbreaks',
+        name: 'AdBreak 预加载配置',
+        category: '广告配置',
+        severity: 'warning',
+        check(html, h) {
+            const preload = h.count("preloadAdBreaks");
+            const on = h.count("preloadAdBreaks\\s*:\\s*['\"]on['\"]");
+            if (on > 0)
+                return { pass: null, msg: `preloadAdBreaks: 'on' 已配置，需确认是否会自动播放 preroll` };
+            if (preload > 0)
+                return { pass: null, msg: `preloadAdBreaks 配置 (${preload} 处)，需确认预加载行为` };
+            return { pass: true, msg: '未检测到 preloadAdBreaks 配置' };
+        }
+    },
+    {
+        id: 'ad_frequency',
+        name: '广告频率控制',
+        category: '广告频率',
+        severity: 'warning',
+        check(html, h) {
+            // 检查是否有频率限制逻辑
+            const hasThrottle = /adInterval|adCooldown|lastAdTime|adTimer|adFreq|minInterval|AD_INTERVAL|timeSinceLastAd|canShowAd/i.test(html);
+            const hasConfig = /adConfig\s*\(\s*\{[^}]*frequency/i.test(html);
+            if (hasThrottle || hasConfig)
+                return { pass: true, msg: '检测到广告频率控制逻辑' };
+            // 有广告代码但没频率控制
+            const hasAdCode = /adBreak|showAd|adsbygoogle/i.test(html);
+            if (hasAdCode)
+                return { pass: null, msg: '有广告代码但未检测到频率控制，建议确认广告不会过于频繁' };
+            return { pass: true, msg: '无广告代码，无需频率控制' };
+        }
+    },
+    {
+        id: 'iframe_embedding',
+        name: 'iframe 嵌套',
+        category: 'iframe',
+        severity: 'warning',
+        check(html, h) {
+            const iframes = h.matches('src="[^"]*\\.html[^"]*"');
+            const jsIframes = h.matches("createElement\\s*\\(\\s*['\"]iframe['\"]");
+            const containers = h.count('gameFrameContainer|gameIFrame|createIframe|\\biframeContainer\\b');
+            const allCount = new Set([...iframes, ...jsIframes]).size + (containers > 0 && iframes.length === 0 && jsIframes.length === 0 ? 1 : 0);
+            if (allCount > 0)
+                return { pass: null, msg: `iframe 嵌套 (${allCount} 个)，需检查是否用于隔离广告环境` };
+            return { pass: true, msg: '无 iframe 嵌套' };
+        }
+    },
+    {
+        id: 'csp_header',
+        name: 'CSP 安全策略',
+        category: '安全',
+        severity: 'warning',
+        check(html, h) {
+            if (/Content-Security-Policy/i.test(html))
+                return { pass: true, msg: '设置了 Content-Security-Policy' };
+            return { pass: null, msg: '未检测到 CSP，建议添加防止 XSS' };
+        }
+    },
+    {
+        id: 'obfuscation',
+        name: '代码混淆',
+        category: '安全',
+        severity: 'warning',
+        check(html, h) {
+            const obf = h.count('_0x[a-f0-9]');
+            if (obf > 50)
+                return { pass: null, msg: `大量混淆代码 (${obf} 处)，可能隐藏广告逻辑` };
+            if (obf > 20)
+                return { pass: null, msg: `部分混淆代码 (${obf} 处)` };
+            return { pass: true, msg: '代码未明显混淆' };
+        }
+    },
+
+    // ===== ℹ️ 信息规则 (info) =====
+    {
+        id: 'reward_ad',
+        name: '激励广告',
+        category: '激励广告',
+        severity: 'info',
+        check(html, h) {
+            const reward = h.count('rewardAd|rewarded|showReward|rewardVideo|rewardAdBreak');
+            if (reward > 0)
+                return { pass: true, msg: `检测到激励广告代码 (${reward} 处)，用户主动触发，合规` };
+            return { pass: true, msg: '未检测到激励广告' };
+        }
+    },
+    {
+        id: 'sdk_list',
+        name: '广告 SDK 识别',
+        category: 'SDK',
+        severity: 'info',
+        check(html, h) {
+            const sdks = [];
+            if (/adsbygoogle/i.test(html)) sdks.push('AdSense');
+            if (/adBreak|adConfig/i.test(html)) sdks.push('AdBreak API');
+            if (/ima3|google\.ima/i.test(html)) sdks.push('IMA SDK');
+            if (/funmax/i.test(html)) sdks.push('Funmax');
+            if (/adsGameCon|AGSDK|actiongameshub/i.test(html)) sdks.push('AGSDK');
+            if (/gamemonetize/i.test(html)) sdks.push('GameMonetize');
+            if (/poki.*sdk|poki-sdk/i.test(html)) sdks.push('Poki SDK');
+            if (/crazygames/i.test(html)) sdks.push('CrazyGames');
+            if (/yandex.*game|y8/i.test(html)) sdks.push('Yandex Games');
+            if (/gmaSdk/i.test(html)) sdks.push('GMA SDK');
+            if (sdks.length)
+                return { pass: true, msg: `识别到: ${sdks.join(', ')}` };
+            return { pass: true, msg: '未识别到已知广告 SDK' };
+        }
+    }
+];
+
 // ==================== Audit Engine ====================
 function auditHTML(html, url) {
-    const result = { url, timestamp: new Date().toISOString(), issues: [], warnings: [], passed: [], details: {} };
-    const r = (pat, flags) => { try { return (html.match(new RegExp(pat, flags || 'gi')) || []).length; } catch(e) { return 0; } };
-    const rf = (pat, flags) => { try { return [...new Set(html.match(new RegExp(pat, flags || 'gi')) || [])].slice(0, 8); } catch(e) { return []; } };
+    const result = { url, timestamp: new Date().toISOString(), issues: [], warnings: [], passed: [], infos: [], details: {}, score: 100 };
 
+    const helpers = {
+        count(pat, flags) { try { return (html.match(new RegExp(pat, flags || 'gi')) || []).length; } catch(e) { return 0; } },
+        matches(pat, flags) { try { return [...new Set(html.match(new RegExp(pat, flags || 'gi')) || [])].slice(0, 8); } catch(e) { return []; } }
+    };
+
+    // Extract metadata
     const titleM = html.match(/<title>(.*?)<\/title>/is);
     if (titleM) result.details.title = titleM[1].trim();
 
     const engines = [];
-    if (/cocos|cc\./i.test(html)) engines.push('Cocos Creator');
-    if (/unity|webgl.*loader|unityWebglBuild/i.test(html)) engines.push('Unity WebGL');
+    if (/cocos|cc\.\d|CC_EDITOR|cc\._decorator/i.test(html)) engines.push('Cocos Creator');
+    if (/unity|webgl.*loader|unityWebglBuild|UnityLoader/i.test(html)) engines.push('Unity WebGL');
     if (/construct|c3runtime|c2runtime/i.test(html)) engines.push('Construct');
     if (/phaser/i.test(html)) engines.push('Phaser');
     if (/godot/i.test(html)) engines.push('Godot');
+    if (/pixi/i.test(html)) engines.push('PixiJS');
+    if (/three\.?js|THREE\./i.test(html)) engines.push('Three.js');
+    if (/egret/i.test(html)) engines.push('Egret');
+    if (/laya/i.test(html)) engines.push('Laya');
     if (engines.length) result.details.engine = engines.join(', ');
 
-    const pubIds = rf('ca-pub-\\d+');
+    const pubIds = helpers.matches('ca-pub-\\d+');
     if (pubIds.length) result.details.pubIds = pubIds;
 
-    const adSlots = rf('data-ad-slot="([^"]*)"');
+    const adSlots = helpers.matches('data-ad-slot="([^"]*)"');
     if (adSlots.length) result.details.adSlots = adSlots;
 
-    const sdks = [];
-    if (/adsbygoogle/i.test(html)) sdks.push('Google AdSense');
-    if (/adBreak|adConfig/i.test(html)) sdks.push('AdBreak API');
-    if (/ima3|google\.ima/i.test(html)) sdks.push('Google IMA SDK');
-    if (/funmax/i.test(html)) sdks.push('Funmax SDK');
-    if (/adsGameCon|AGSDK|actiongameshub/i.test(html)) sdks.push('AGSDK');
-    if (/gamemonetize/i.test(html)) sdks.push('GameMonetize');
-    if (/poki/i.test(html) && !sdks.join('').includes('Poki')) sdks.push('Poki SDK');
-    if (sdks.length) result.details.adSdk = sdks.join(', ');
+    // Run all rules
+    for (const rule of RULES) {
+        const outcome = rule.check(html, helpers);
+        const weight = rule.severity === 'critical' ? 15 : rule.severity === 'warning' ? 5 : 0;
+        const item = { cat: rule.category, icon: outcome.pass === true ? 'pass' : outcome.pass === null ? 'warn' : 'fail', msg: `[${rule.name}] ${outcome.msg}`, ruleId: rule.id };
 
-    // 1. 开屏/Preroll
-    const preroll = r('preroll|pre.?roll|splash.*ad|preAd|preloadAd');
-    const autoTrigger = r('visibilitychange.*ad|autoShow|auto.*adBreak|setInterval.*showAd|setTimeout.*showAd|onload.*adBreak');
-    if (preroll > 0 && autoTrigger > 0)
-        result.issues.push({ cat: '开屏广告', icon: 'fail', msg: `preroll/splash (${preroll}) + 自动触发 (${autoTrigger})` });
-    else if (preroll > 0)
-        result.warnings.push({ cat: '开屏广告', icon: 'warn', msg: `preroll/splash 相关代码 (${preroll} 处)，需确认是否自动播放` });
-    else
-        result.passed.push({ cat: '开屏广告', icon: 'pass', msg: '未检测到 preroll/splash' });
+        if (outcome.pass === false) {
+            result.issues.push(item);
+            result.score -= weight;
+        } else if (outcome.pass === null) {
+            result.warnings.push(item);
+            result.score -= weight;
+        } else if (rule.severity === 'info') {
+            result.infos.push(item);
+        } else {
+            result.passed.push(item);
+        }
+    }
 
-    // 2. visibilitychange
-    const visAd = r('visibilitychange.*ad|visibilitychange.*show|document.*visibility.*ad');
-    if (visAd > 0)
-        result.issues.push({ cat: '自动弹广告', icon: 'fail', msg: `visibilitychange + 广告联动 (${visAd} 处)` });
-    else
-        result.passed.push({ cat: '自动弹广告', icon: 'pass', msg: '未检测到 visibilitychange 自动弹广告' });
-
-    // 3. 定时器
-    const timerShow = r('setInterval\\s*\\([^)]*showAd|setTimeout\\s*\\([^)]*showAd');
-    if (timerShow > 0)
-        result.issues.push({ cat: '定时弹广告', icon: 'fail', msg: `定时器触发广告 (${timerShow} 处)` });
-    else
-        result.passed.push({ cat: '定时弹广告', icon: 'pass', msg: '未检测到定时器触发广告' });
-
-    // 4. Banner
-    const bannerFixed = r('position:\\s*fixed|position:\\s*absolute.*banner|z-index:\\s*9{2,}|z-index:\\s*9[0-9]0');
-    const bannerDiv = r('initBanner|banner.*div|bottom.*banner|bannerWidth|bannerHeight|xmBanner');
-    if (bannerFixed > 0 || bannerDiv > 0)
-        result.issues.push({ cat: 'Banner 遮挡', icon: 'warn', msg: `Banner 代码 (定位:${bannerFixed}, 逻辑:${bannerDiv})，检查是否常驻遮挡` });
-    else
-        result.passed.push({ cat: 'Banner', icon: 'pass', msg: '未检测到 Banner 广告代码' });
-
-    // 5. iframe
-    const iframes = rf('src="[^"]*\\.html[^"]*"');
-    const jsIframes = rf("src[=:\\s]+['\"]\\\\./(game|index|play)\\\\.html");
-    const containers = rf('gameFrameContainer|gameIFrame|createIframe');
-    const allIframes = [...new Set([...iframes, ...jsIframes])];
-    if (!allIframes.length && containers.length) allIframes.push('(JS动态创建)');
-    if (allIframes.length)
-        result.warnings.push({ cat: 'iframe', icon: 'warn', msg: `iframe 嵌套: ${allIframes.join(', ')}` });
-    else
-        result.passed.push({ cat: 'iframe', icon: 'pass', msg: '无 iframe 嵌套' });
-
-    // 6. CSP
-    if (/Content-Security-Policy/i.test(html))
-        result.passed.push({ cat: 'CSP', icon: 'pass', msg: '设置了 Content-Security-Policy' });
-    else
-        result.warnings.push({ cat: 'CSP', icon: 'warn', msg: '未检测到 CSP' });
-
-    // 7. 混淆
-    const obfuscate = r('_0x[a-f0-9]');
-    if (obfuscate > 20)
-        result.warnings.push({ cat: '代码混淆', icon: 'warn', msg: `大量混淆代码 (${obfuscate} 处)` });
-
-    // 8. adBreak start
-    const adbreakStart = r("adBreak\\s*\\(\\s*\\{[^}]*type:\\s*['\"]start");
-    if (adbreakStart > 0)
-        result.warnings.push({ cat: 'adBreak start', icon: 'warn', msg: `adBreak type=start (${adbreakStart} 处)，需确认是否自动 preroll` });
-
+    result.score = Math.max(0, result.score);
     return result;
 }
 
 // ==================== URL Mode ====================
 const PROXIES = [
-    u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
     u => 'https://corsproxy.io/?' + encodeURIComponent(u),
+    u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
     u => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
 ];
 
@@ -292,7 +523,7 @@ async function startUrlAudit() {
             auditResults.push(auditHTML(html, urls[i]));
         } catch(e) {
             errors.push(`${urls[i]}: ${e.message}`);
-            auditResults.push({ url: urls[i], timestamp: new Date().toISOString(), issues: [{ cat:'获取失败', icon:'fail', msg: e.message }], warnings:[], passed:[], details:{} });
+            auditResults.push({ url: urls[i], timestamp: new Date().toISOString(), issues: [{ cat:'获取失败', icon:'fail', msg: e.message }], warnings:[], passed:[], infos:[], details:{}, score: 0 });
         }
     }
     fill.style.width = '100%';
@@ -307,15 +538,17 @@ function startHtmlAudit() {
     const raw = document.getElementById('htmlInput').value.trim();
     if (!raw) return alert('请先粘贴 HTML 源码');
 
-    // Split by separator or detect URL+HTML pattern
-    const blocks = raw.split(/---分隔---/g).map(s => s.trim()).filter(Boolean);
+    // 灵活分隔：支持 "---分隔---"、"---分隔---" 带空格、"---" 重复等变体
+    const blocks = raw.split(/\s*-{2,}\s*分隔\s*-{2,}\s*/g).map(s => s.trim()).filter(Boolean);
+    // 如果没有分隔符，整块作为一个
+    const pages = blocks.length > 1 ? blocks : [raw];
     auditResults = [];
 
-    for (const block of blocks) {
+    for (const block of pages) {
         let url = '(粘贴的源码)';
         let html = block;
 
-        // If first line looks like a URL, extract it
+        // 如果第一行看起来像 URL，提取出来
         const lines = block.split('\n');
         if (/^https?:\/\//.test(lines[0].trim())) {
             url = lines[0].trim();
@@ -335,24 +568,55 @@ function loadHtmlExample() {
 <html>
 <head>
   <title>Test Game</title>
-  <`+`script src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1234567890"><\/script>
-  <`+`script>
+  <script src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1234567890"><\/script>
+  <script>
     window.adsbygoogle = window.adsbygoogle || [];
     var adBreak = adConfig = function(o) { adsbygoogle.push(o); }
     adConfig({ preloadAdBreaks: 'on' });
   <\/script>
   <style>
-    .bottom-div { position: fixed; bottom: 0; z-index: 9999; width: 320px; height: 50px; }
+    .bottom-banner { position: fixed; bottom: 0; z-index: 9999; width: 320px; height: 50px; }
   </style>
 </head>
 <body>
   <canvas id="GameCanvas"></canvas>
-  <div class="bottom-div">
+  <div class="bottom-banner">
     <ins class="adsbygoogle" data-ad-client="ca-pub-1234567890" data-ad-slot="999999"></ins>
   </div>
-  <`+`script>
-    function showTableAd() {
+  <script>
+    // 合规：用户点击后触发
+    function onGameButtonClick() {
       adBreak({ type: 'start', name: 'game_started' });
+    }
+    // 违规：页面加载自动触发
+    window.onload = function() {
+      adBreak({ type: 'start', name: 'auto_start' });
+    }
+    // 违规：定时器自动触发
+    setInterval(function() {
+      showAd('interstitial');
+    }, 30000);
+  <\/script>
+</body>
+</html>
+
+---分隔---
+
+https://example.com/game2/index.html
+<!DOCTYPE html>
+<html>
+<head>
+  <title>合规游戏</title>
+</head>
+<body>
+  <script>
+    // 合规：visibilitychange 只暂停游戏
+    document.addEventListener('visibilitychange', function() {
+      if (document.hidden) { game.pause(); } else { game.resume(); }
+    });
+    // 合规：游戏结束时弹插屏
+    function onGameOver() {
+      adBreak({ type: 'next', name: 'game_over' });
     }
   <\/script>
 </body>
@@ -377,26 +641,29 @@ function renderResults() {
         const st = r.issues.length ? 'fail' : r.warnings.length ? 'warn' : 'pass';
         const stT = {pass:'✅ 合规',warn:'⚠️ 关注',fail:'🔴 有问题'}[st];
         const bC = {pass:'badge-pass',warn:'badge-warn',fail:'badge-fail'}[st];
+        const scC = r.score >= 80 ? 'score-low' : r.score >= 50 ? 'score-mid' : 'score-high';
 
         const meta = [];
         if(r.details.title) meta.push(`<div><span class="label">游戏</span><span>${r.details.title}</span></div>`);
         if(r.details.engine) meta.push(`<div><span class="label">引擎</span><span>${r.details.engine}</span></div>`);
         if(r.details.pubIds) meta.push(`<div><span class="label">Publisher ID</span><span>${r.details.pubIds.join(', ')}</span></div>`);
-        if(r.details.adSdk) meta.push(`<div><span class="label">广告 SDK</span><span>${r.details.adSdk}</span></div>`);
         if(r.details.adSlots) meta.push(`<div><span class="label">广告 Slot</span><span>${r.details.adSlots.join(', ')}</span></div>`);
 
         const chk = items => items.map(i =>
-            `<div class="check-item"><div class="check-icon check-${i.icon}">${i.icon==='pass'?'✓':i.icon==='warn'?'!':'✗'}</div><div><strong>[${i.cat}]</strong> ${i.msg}</div></div>`
+            `<div class="check-item"><div class="check-icon check-${i.icon}">${i.icon==='pass'?'✓':i.icon==='warn'?'!':'✗'}</div><div>${i.msg}</div></div>`
         ).join('');
 
         return `<div class="result-card">
             <div class="result-header" onclick="this.nextElementSibling.classList.toggle('open')">
-                <span class="url">${r.url}</span>
+                <span class="url">${r.url} <span class="score-badge ${scC}">${r.score}分</span></span>
                 <span class="badge ${bC}">${stT}</span>
             </div>
             <div class="result-body">
                 ${meta.length?'<div class="result-meta">'+meta.join('')+'</div>':''}
-                ${chk(r.issues)}${chk(r.warnings)}${chk(r.passed)}
+                ${r.issues.length?'<div style="margin:8px 0 4px;font-weight:600;color:#c0392b">🔴 问题项</div>':''}${chk(r.issues)}
+                ${r.warnings.length?'<div style="margin:12px 0 4px;font-weight:600;color:#b7950b">⚠️ 关注项</div>':''}${chk(r.warnings)}
+                ${r.passed.length?'<div style="margin:12px 0 4px;font-weight:600;color:#1e8449">✅ 合规项</div>':''}${chk(r.passed)}
+                ${r.infos&&r.infos.length?'<div style="margin:12px 0 4px;font-weight:600;color:#2980b9">ℹ️ 信息</div>':''}${chk(r.infos)}
             </div>
         </div>`;
     }).join('');
@@ -414,24 +681,23 @@ function exportMarkdown() {
     let md = `# H5 游戏广告合规审核报告\n- 时间: ${new Date().toLocaleString()}\n\n`;
     auditResults.forEach(r => {
         const st = r.issues.length ? '🔴 有问题' : r.warnings.length ? '⚠️ 关注' : '✅ 合规';
-        md += `## ${r.url} — ${st}\n`;
+        md += `## ${r.url} — ${st}（${r.score}分）\n`;
         if(r.details.title) md += `- 游戏: ${r.details.title}\n`;
         if(r.details.engine) md += `- 引擎: ${r.details.engine}\n`;
         if(r.details.pubIds) md += `- Publisher ID: ${r.details.pubIds.join(', ')}\n`;
-        if(r.details.adSdk) md += `- 广告 SDK: ${r.details.adSdk}\n`;
-        if(r.issues.length){md+=`### 🔴 问题项\n`;r.issues.forEach(i=>md+=`- [${i.cat}] ${i.msg}\n`)}
-        if(r.warnings.length){md+=`### ⚠️ 关注项\n`;r.warnings.forEach(i=>md+=`- [${i.cat}] ${i.msg}\n`)}
-        if(r.passed.length){md+=`### ✅ 合规项\n`;r.passed.forEach(i=>md+=`- [${i.cat}] ${i.msg}\n`)}
+        if(r.issues.length){md+=`### 🔴 问题项\n`;r.issues.forEach(i=>md+=`- ${i.msg}\n`)}
+        if(r.warnings.length){md+=`### ⚠️ 关注项\n`;r.warnings.forEach(i=>md+=`- ${i.msg}\n`)}
+        if(r.passed.length){md+=`### ✅ 合规项\n`;r.passed.forEach(i=>md+=`- ${i.msg}\n`)}
         md += '\n---\n\n';
     });
     dl(md,'h5-audit.md','text/markdown');
 }
 function exportJSON() { dl(JSON.stringify(auditResults,null,2),'h5-audit.json','application/json'); }
 function exportTSV() {
-    let t = 'URL\t游戏名\t引擎\tPublisher ID\t广告SDK\t问题数\t关注数\t合规数\t状态\n';
+    let t = 'URL\t游戏名\t引擎\tPublisher ID\t问题数\t关注数\t合规数\t得分\t状态\n';
     auditResults.forEach(r=>{
         const st=r.issues.length?'有问题':r.warnings.length?'关注':'合规';
-        t+=`${r.url}\t${r.details.title||''}\t${r.details.engine||''}\t${(r.details.pubIds||[]).join(', ')}\t${r.details.adSdk||''}\t${r.issues.length}\t${r.warnings.length}\t${r.passed.length}\t${st}\n`;
+        t+=`${r.url}\t${r.details.title||''}\t${r.details.engine||''}\t${(r.details.pubIds||[]).join(', ')}\t${r.issues.length}\t${r.warnings.length}\t${r.passed.length}\t${r.score}\t${st}\n`;
     });
     navigator.clipboard.writeText(t).then(()=>alert('已复制！直接粘贴到飞书多维表格即可')).catch(()=>dl(t,'h5-audit.tsv','text/tab-separated-values'));
 }
@@ -439,26 +705,27 @@ function dl(c,n,t){const b=new Blob([c],{type:t}),u=URL.createObjectURL(b),a=doc
 
 // ==================== History ====================
 function saveToHistory(results) {
-    const h = JSON.parse(localStorage.getItem('h5_audit_history')||'[]');
-    results.forEach(r=>h.unshift({url:r.url,time:new Date().toLocaleString(),status:r.issues.length?'fail':r.warnings.length?'warn':'pass',issues:r.issues.length,warnings:r.warnings.length,passed:r.passed.length,data:r}));
+    const h = JSON.parse(localStorage.getItem('h5_audit_history_v2')||'[]');
+    results.forEach(r=>h.unshift({url:r.url,time:new Date().toLocaleString(),status:r.issues.length?'fail':r.warnings.length?'warn':'pass',issues:r.issues.length,warnings:r.warnings.length,passed:r.passed.length,score:r.score,data:r}));
     if(h.length>100)h.length=100;
-    localStorage.setItem('h5_audit_history',JSON.stringify(h));
+    localStorage.setItem('h5_audit_history_v2',JSON.stringify(h));
 }
 function renderHistory() {
-    const h = JSON.parse(localStorage.getItem('h5_audit_history')||'[]');
+    const h = JSON.parse(localStorage.getItem('h5_audit_history_v2')||localStorage.getItem('h5_audit_history')||'[]');
     const c = document.getElementById('historyList');
     if(!h.length){c.innerHTML='<p style="color:var(--text-light);font-size:13px">暂无历史记录</p>';return}
     c.innerHTML=h.map((x,i)=>{
         const b={pass:'badge-pass',warn:'badge-warn',fail:'badge-fail'}[x.status];
         const s={pass:'合规',warn:'关注',fail:'有问题'}[x.status];
-        return `<div class="history-item"><span class="history-url">${x.url}</span><span class="history-time">${x.time}</span><span class="badge ${b}">${s}</span><button class="btn btn-secondary btn-small" style="margin-left:8px" onclick="rerunHistory(${i})">查看</button></div>`;
+        const sc = x.score != null ? ` (${x.score}分)` : '';
+        return `<div class="history-item"><span class="history-url">${x.url}</span><span class="history-time">${x.time}</span><span class="badge ${b}">${s}${sc}</span><button class="btn btn-secondary btn-small" style="margin-left:8px" onclick="rerunHistory(${i})">查看</button></div>`;
     }).join('');
 }
 function rerunHistory(i){
-    const h=JSON.parse(localStorage.getItem('h5_audit_history')||'[]');
+    const h=JSON.parse(localStorage.getItem('h5_audit_history_v2')||localStorage.getItem('h5_audit_history')||'[]');
     if(h[i]){auditResults=[h[i].data];renderResults();switchMode('url')}
 }
-function clearHistory(){if(confirm('确定清空？')){localStorage.removeItem('h5_audit_history');renderHistory()}}
+function clearHistory(){if(confirm('确定清空？')){localStorage.removeItem('h5_audit_history_v2');localStorage.removeItem('h5_audit_history');renderHistory()}}
 </script>
 </body>
 </html>
